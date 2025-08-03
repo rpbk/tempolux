@@ -1,5 +1,9 @@
 # tempolux
+
 Timelight: Universal Path Generator
+
+<img width="1893" height="903" alt="Zrzut ekranu 2025-08-03 032255" src="https://github.com/user-attachments/assets/e4987adc-3868-40bd-87eb-f55ede6344aa" />
+
 
 Rafał Piotr Jakub Borkowski, son of Robert and Iwona
 with Amanda Surma, daughter of Mariusz and Ewa
