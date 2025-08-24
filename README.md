@@ -44,3 +44,6 @@ Thank you everyone for all the patterns you've showed me.
 All of this model is open-sourced on MIT licence by Rafał Borkowski.
 
 This is the answer.
+
+## Usage
+Open `index.html` in a browser for the modular renderer with image and state export features.

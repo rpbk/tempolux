@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Timelight Modular</title>
+<style>
+:root { --bg:#000; --fg:#eee; --panel:#111; --bord:#333; --acc:#e05566; }
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.4 ui-monospace,monospace;display:flex;min-height:100vh}
+#controls{width:340px;background:var(--panel);border-right:1px solid var(--bord);padding:10px;overflow-y:auto}
+#stage{flex:1;position:relative}
+#canvas{width:100%;height:100%;display:block;background:#000}
+.row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+label{min-width:80px}
+input[type=text],input[type=number],select{background:#191919;border:1px solid var(--bord);color:var(--fg);padding:4px 6px}
+input[type=color]{width:28px;height:22px;border:0;padding:0}
+button{background:var(--acc);color:#fff;border:0;border-radius:4px;padding:4px 8px;cursor:pointer}
+button.ghost{background:#222}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid var(--bord);padding:4px 6px;text-align:left;font-size:12px}
+td.c{text-align:center}
+.mini{width:120px}
+</style>
+</head>
+<body>
+<div id="controls">
+  <h2>Metatron</h2>
+  <div class="row"><label>Word</label><input id="word" type="text" value="0101" /></div>
+  <div class="row"><label>Time</label><input id="time" type="text" value="01" /></div>
+  <div class="row"><label>Limit</label><input id="limit" type="number" value="120" /></div>
+  <div class="row"><label>Speed ms</label><input id="speed" type="number" value="16" /></div>
+  <div class="row"><label>Δ angle</label><input id="angle" type="number" step="0.1" value="12.4" /></div>
+  <div class="row"><label>Step</label><input id="step" type="number" value="6" /></div>
+  <div class="row"><label>Hist N</label><input id="histN" type="number" value="0" /></div>
+  <div class="row"><label>Disp px</label><input id="disp" type="number" value="0" /></div>
+  <div class="row"><label>Mode</label>
+    <select id="mode"><option value="painter" selected>Painter</option><option value="tension">Tension</option></select>
+  </div>
+  <div class="row"><input id="mono" type="checkbox" /> <label>Monochrome</label></div>
+  <div class="row"><label>BG</label><input id="bg" type="color" value="#000000" /></div>
+  <div class="row"><label>Global α</label><input id="globalAlpha" type="range" min="0" max="100" value="100" class="mini"/></div>
+  <div class="row"><button id="play">Play</button><button id="stop" class="ghost">Stop</button><button id="clear" class="ghost">Clear</button></div>
+  <div class="row"><button id="exportImage">Export Image</button><button id="exportData">Export Data</button><input type="file" id="importData" style="display:none"/></div>
+  <div class="row mini"><label>Scale</label><input id="exportScale" type="number" value="1" step="0.1"/><label>Fmt</label><select id="exportFormat"><option value="png">PNG</option><option value="jpeg">JPEG</option></select><label>Q</label><input id="exportQuality" type="number" value="0.92" min="0" max="1" step="0.01"/></div>
+  <h2>Luciferus</h2>
+  <div class="row"><input id="lx" type="checkbox" checked/><label>XOR</label><input id="lc" type="color" value="#e53935"/><label>α</label><input id="lo" type="range" min="0" max="100" value="100" class="mini"/></div>
+  <div class="row"><input id="lnx" type="checkbox"/><label>XNOR</label><input id="lnc" type="color" value="#1e88e5"/><label>α</label><input id="lno" type="range" min="0" max="100" value="100" class="mini"/></div>
+  <h2>Relatious</h2>
+  <table id="relTable"><thead><tr><th>On</th><th>Op</th><th class="c">Color</th><th>α</th></tr></thead><tbody></tbody></table>
+</div>
+<div id="stage"><canvas id="canvas"></canvas></div>
+<script>
+// helpers
+function cleanBits(s){ return (s||'').replace(/[^01]/g,'')||'0'; }
+function toBitsArr(s){ var a=new Uint8Array(s.length); for(var i=0;i<s.length;i++) a[i]=s.charCodeAt(i)&1; return a; }
+function fromBitsArr(a){ var s=''; for(var i=0;i<a.length;i++) s+=a[i]? '1':'0'; return s; }
+function hex2rgb(h){ h=h.replace('#',''); return {r:parseInt(h.slice(0,2),16),g:parseInt(h.slice(2,4),16),b:parseInt(h.slice(4,6),16)}; }
+function toGray(rgb){ var v=Math.round(0.2126*rgb.r+0.7152*rgb.g+0.0722*rgb.b); return {r:v,g:v,b:v}; }
+function clamp01(x){ return Math.max(0,Math.min(1,x)); }
+
+// SequenceEngine
+class SequenceEngine{
+  constructor(word,time,limit){
+    this.word=cleanBits(word); this.time=cleanBits(time)||'01';
+    this.limit=limit||120; this.timeIdx=0; this.gen=0;
+  }
+  xorWithTime(w){ var out=new Uint8Array(w.length); for(var i=0;i<w.length;i++){ var tb=this.time[(this.timeIdx+i)%this.time.length]==='1'?1:0; out[i]=(w.charCodeAt(i)&1)^tb; } return out; }
+  evolve(){ var xorArr=this.xorWithTime(this.word); var next=fromBitsArr(xorArr); var g=this.time[(this.timeIdx+this.word.length)%this.time.length]; next=(next+g).slice(-this.limit); var prev=this.word; this.word=next; this.timeIdx++; this.gen++; return {word:prev,xor:xorArr,gen:this.gen}; }
+  getState(){ return {word:this.word,time:this.time,timeIdx:this.timeIdx,limit:this.limit,gen:this.gen}; }
+  setState(o){ Object.assign(this,o); }
+  xnor(arr){ var out=new Uint8Array(arr.length); for(var i=0;i<arr.length;i++) out[i]=arr[i]^1; return out; }
+}
+
+// TraceHistory
+class TraceHistory{
+  constructor(){ this.list=[]; }
+  add(rec){ this.list.push(rec); }
+  clear(){ this.list.length=0; }
+  slice(n){ return n>0? this.list.slice(-n):this.list; }
+}
+
+// Operators
+var OPS=[
+{group:'Identities',key:'A',fn:(a,b)=>a},
+{group:'Identities',key:'NA',fn:(a,b)=>1-a},
+{group:'Identities',key:'B',fn:(a,b)=>b},
+{group:'Identities',key:'NB',fn:(a,b)=>1-b},
+{group:'Agreement',key:'XNOR',fn:(a,b)=>1-(a^b)},
+{group:'Agreement',key:'XOR',fn:(a,b)=>(a^b)},
+{group:'Aggregators',key:'AND',fn:(a,b)=>(a&b)},
+{group:'Aggregators',key:'OR',fn:(a,b)=>(a|b)},
+{group:'Aggregators',key:'NAND',fn:(a,b)=>1-(a&b)},
+{group:'Aggregators',key:'NOR',fn:(a,b)=>1-(a|b)},
+{group:'Directional',key:'AtoB',fn:(a,b)=>(1-a)|b},
+{group:'Directional',key:'BtoA',fn:(a,b)=>a|(1-b)},
+{group:'Directional',key:'AandNB',fn:(a,b)=>(a&(1-b))},
+{group:'Directional',key:'NAandB',fn:(a,b)=>((1-a)&b)},
+{group:'Const',key:'FALSE',fn:(a,b)=>0},
+{group:'Const',key:'TRUE',fn:(a,b)=>1}
+];
+
+var relTBody=document.querySelector('#relTable tbody');
+var relLayers={};
+OPS.forEach(op=>{
+ var tr=document.createElement('tr');
+ tr.innerHTML='<td class="c"><input class="chk" type="checkbox" data-k="'+op.key+'"></td>'+
+              '<td>'+op.key+'</td>'+
+              '<td class="c"><input class="col" type="color" value="#'+(Math.random()*16777215|0).toString(16).padStart(6,'0')+'" data-k="'+op.key+'"></td>'+
+              '<td><input class="alp" type="range" min="0" max="100" value="100" class="mini" data-k="'+op.key+'"></td>';
+ relTBody.appendChild(tr);
+ var chk=tr.querySelector('.chk'),col=tr.querySelector('.col'),alp=tr.querySelector('.alp');
+ relLayers[op.key]={on:false,color:col.value,alpha:+alp.value};
+ chk.addEventListener('input',()=>relLayers[op.key].on=chk.checked);
+ col.addEventListener('input',()=>relLayers[op.key].color=col.value);
+ alp.addEventListener('input',()=>relLayers[op.key].alpha=+alp.value);
+});
+
+// Renderer
+class Renderer{
+  constructor(cvs){ this.cvs=cvs; this.ctx=cvs.getContext('2d'); window.addEventListener('resize',()=>this.resize()); this.resize(); }
+  resize(){ var dpr=window.devicePixelRatio||1; this.cvs.width=this.cvs.clientWidth*dpr; this.cvs.height=this.cvs.clientHeight*dpr; this.ctx.setTransform(dpr,0,0,dpr,0,0); }
+  setStroke(color,alpha){ var rgb=hex2rgb(color); if(document.getElementById('mono').checked) rgb=toGray(rgb); var a=clamp01(alpha/100*(+document.getElementById('globalAlpha').value/100)); this.ctx.strokeStyle='rgba('+rgb.r+','+rgb.g+','+rgb.b+','+a+')'; }
+  drawBits(bits,color,alpha,mode,yOff){ if(!bits) return; var angle=+document.getElementById('angle').value; var step=+document.getElementById('step').value; var x=this.cvs.clientWidth/2; var y=this.cvs.clientHeight/2+(yOff||0); var ang=-Math.PI/2; if(mode==='tension'){ var s=0,S=[],maxS=0; for(var i=0;i<bits.length;i++){ s+=bits[i]?1:-1; S.push(s); maxS=Math.max(maxS,Math.abs(s)); }
+    for(var j=0;j<bits.length;j++){ var px=x,py=y; ang+=(bits[j]?angle:-angle)*Math.PI/180; x+=Math.cos(ang)*step; y+=Math.sin(ang)*step; var t=maxS?S[j]/maxS:0; var rr=Math.round(255*clamp01(t>0?t:0)); var bb=Math.round(255*clamp01(t<0?-t:0)); var gg=255-Math.max(rr,bb); if(document.getElementById('mono').checked){ var m=Math.max(rr,gg,bb); rr=gg=bb=m; } var a=clamp01(alpha/100*(+document.getElementById('globalAlpha').value/100)); this.ctx.strokeStyle='rgba('+rr+','+gg+','+bb+','+a+')'; this.ctx.beginPath(); this.ctx.moveTo(px,py); this.ctx.lineTo(x,y); this.ctx.stroke(); }
+    return;
+  }
+  this.setStroke(color,alpha); this.ctx.beginPath(); this.ctx.moveTo(x,y);
+  for(var k=0;k<bits.length;k++){ ang+=(bits[k]?angle:-angle)*Math.PI/180; x+=Math.cos(ang)*step; y+=Math.sin(ang)*step; this.ctx.lineTo(x,y); }
+  this.ctx.stroke(); }
+  clear(bg){ this.ctx.fillStyle=bg; this.ctx.fillRect(0,0,this.cvs.clientWidth,this.cvs.clientHeight); }
+}
+
+// instantiate modules
+var engine=new SequenceEngine(document.getElementById('word').value, document.getElementById('time').value, +document.getElementById('limit').value);
+var history=new TraceHistory();
+var renderer=new Renderer(document.getElementById('canvas'));
+var running=false,last=0;
+
+function frame(t){ if(!running) return; var pace=Math.max(1,+document.getElementById('speed').value); if(t-last<pace){ requestAnimationFrame(frame); return;} last=t; var state=engine.evolve(); history.add(state);
+ renderer.clear(document.getElementById('bg').value);
+ var records=history.slice(+document.getElementById('histN').value);
+ var disp=+document.getElementById('disp').value;
+ var mode=document.getElementById('mode').value;
+ records.forEach(function(rec,idx){ var yOff=idx*disp; if(document.getElementById('lx').checked) renderer.drawBits(rec.xor, document.getElementById('lc').value, +document.getElementById('lo').value, mode, yOff); if(document.getElementById('lnx').checked) renderer.drawBits(engine.xnor(rec.xor), document.getElementById('lnc').value, +document.getElementById('lno').value, mode, yOff);
+   var nextWord = records[idx+1]?records[idx+1].word:engine.word;
+   var A=toBitsArr(rec.word), B=toBitsArr(nextWord), n=Math.min(A.length,B.length);
+   OPS.forEach(op=>{ var layer=relLayers[op.key]; if(layer.on){ var out=new Uint8Array(n); for(var i=0;i<n;i++) out[i]=op.fn(A[i],B[i])|0; renderer.drawBits(out, layer.color, layer.alpha, mode, yOff); }});
+ });
+ requestAnimationFrame(frame);
+}
+
+// controls
+function resetEngine(){ engine=new SequenceEngine(document.getElementById('word').value, document.getElementById('time').value, +document.getElementById('limit').value); history.clear(); renderer.clear(document.getElementById('bg').value); }
+
+document.getElementById('play').onclick=function(){ resetEngine(); running=true; requestAnimationFrame(frame); };
+document.getElementById('stop').onclick=function(){ running=false; };
+document.getElementById('clear').onclick=function(){ renderer.clear(document.getElementById('bg').value); history.clear(); };
+
+// exports
+function exportImage(){ var scale=parseFloat(document.getElementById('exportScale').value)||1; var fmt=document.getElementById('exportFormat').value; var q=parseFloat(document.getElementById('exportQuality').value)||0.92; var cvs=renderer.cvs; var tmp=document.createElement('canvas'); tmp.width=cvs.width*scale; tmp.height=cvs.height*scale; tmp.getContext('2d').drawImage(cvs,0,0,tmp.width,tmp.height); tmp.toBlob(function(blob){ var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='timelight.'+fmt; a.click(); URL.revokeObjectURL(a.href); },'image/'+fmt,q); }
+
+document.getElementById('exportImage').onclick=exportImage;
+
+function collectUI(){ return {
+ word:document.getElementById('word').value,
+ time:document.getElementById('time').value,
+ limit:+document.getElementById('limit').value,
+ speed:+document.getElementById('speed').value,
+ angle:+document.getElementById('angle').value,
+ step:+document.getElementById('step').value,
+ histN:+document.getElementById('histN').value,
+ disp:+document.getElementById('disp').value,
+ mode:document.getElementById('mode').value,
+ mono:document.getElementById('mono').checked,
+ bg:document.getElementById('bg').value,
+ globalAlpha:+document.getElementById('globalAlpha').value,
+ lx:document.getElementById('lx').checked, lc:document.getElementById('lc').value, lo:+document.getElementById('lo').value,
+ lnx:document.getElementById('lnx').checked, lnc:document.getElementById('lnc').value, lno:+document.getElementById('lno').value,
+ relLayers:relLayers
+ }; }
+function applyUI(u){ document.getElementById('word').value=u.word; document.getElementById('time').value=u.time; document.getElementById('limit').value=u.limit; document.getElementById('speed').value=u.speed; document.getElementById('angle').value=u.angle; document.getElementById('step').value=u.step; document.getElementById('histN').value=u.histN; document.getElementById('disp').value=u.disp; document.getElementById('mode').value=u.mode; document.getElementById('mono').checked=u.mono; document.getElementById('bg').value=u.bg; document.getElementById('globalAlpha').value=u.globalAlpha; document.getElementById('lx').checked=u.lx; document.getElementById('lc').value=u.lc; document.getElementById('lo').value=u.lo; document.getElementById('lnx').checked=u.lnx; document.getElementById('lnc').value=u.lnc; document.getElementById('lno').value=u.lno; Object.keys(u.relLayers).forEach(k=>{ if(relLayers[k]){ relLayers[k].on=u.relLayers[k].on; relLayers[k].color=u.relLayers[k].color; relLayers[k].alpha=u.relLayers[k].alpha; var row=relTBody.querySelector('input[data-k="'+k+'"].chk'); if(row) row.checked=relLayers[k].on; var c=relTBody.querySelector('input[data-k="'+k+'"].col'); if(c) c.value=relLayers[k].color; var a=relTBody.querySelector('input[data-k="'+k+'"].alp'); if(a) a.value=relLayers[k].alpha; }}); }
+function exportData(){ var data={version:'1.0.0',timestamp:new Date().toISOString(),state:engine.getState(),history:history.list,ui:collectUI()}; var blob=new Blob([JSON.stringify(data)],{type:'application/json'}); var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='timelight.json'; a.click(); URL.revokeObjectURL(a.href); }
+function importData(e){ var file=e.target.files[0]; if(!file) return; var reader=new FileReader(); reader.onload=function(){ try{ var data=JSON.parse(reader.result); engine.setState(data.state); history.list=data.history||[]; applyUI(data.ui); renderer.clear(document.getElementById('bg').value); }catch(err){ console.error(err); } }; reader.readAsText(file); }
+document.getElementById('exportData').onclick=exportData;
+document.getElementById('importData').addEventListener('change',importData);
+</script>
+</body>
+</html>
